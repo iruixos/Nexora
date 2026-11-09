@@ -27,6 +27,25 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
     private final Map<UUID,Long> cooldowns=new HashMap<>();
     private final Random random=new Random();
     private String blockKey(UUID world,String cell){return world+":"+cell;}
+    private void logStartupBanner() {
+        String version = getPluginMeta().getVersion();
+        String minecraftVersion = Bukkit.getMinecraftVersion();
+        String[] lines = {
+                "[N] Nexora v" + version,
+                "    by iruixos",
+                "    Paper " + minecraftVersion + " / MC " + minecraftVersion
+        };
+        int innerWidth = Math.max(31, Arrays.stream(lines).mapToInt(String::length).max().orElse(0) + 2);
+        String border = "+" + "-".repeat(innerWidth) + "+";
+        getLogger().info("");
+        getLogger().info("  " + border);
+        for (String line : lines) {
+            getLogger().info("  | " + line + " ".repeat(innerWidth - line.length() - 1) + "|");
+        }
+        getLogger().info("  " + border);
+        getLogger().info("");
+    }
+
     @Override public void onEnable(){
         saveDefaultConfig();
         try {store=new GateStore(getDataFolder().toPath().resolve("gates.db"));for(Gate g:store.load())register(g);}
@@ -36,6 +55,7 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
         getServer().getPluginManager().registerEvents(this,this);
         Objects.requireNonNull(getCommand("nexora")).setExecutor(this);
         Objects.requireNonNull(getCommand("nexora")).setTabCompleter(this);
+        logStartupBanner();
         getLogger().info("Loaded "+gates.size()+" portals");
     }
     @Override public void onDisable(){if(effects!=null)effects.stop();if(store!=null)try{store.close();}catch(SQLException e){getLogger().warning(e.getMessage());}}

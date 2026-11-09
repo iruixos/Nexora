@@ -1,5 +1,5 @@
 name: Nexora
-version: '1.2.2'
+version: '1.2.3'
 main: com.iruixos.nexora.NexoraPlugin
 api-version: '26.3'
 author: iruixos

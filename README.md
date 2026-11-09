@@ -52,7 +52,7 @@ Networks support independent routing modes, ownership-based management, persiste
 5. Edit `config.yml` and `effects.yml` as desired, then run `/nexora reload` or restart.
 
 > [!IMPORTANT]
-> When upgrading, back up the entire `plugins/Nexora/` directory—especially `gates.db`—before replacing the JAR. Existing gate and network data should be retained when upgrading from 1.2.x.
+> When upgrading, back up the entire `plugins/Nexora/` directory—especially `gates.db`—before replacing the JAR. Existing gate and network data should be retained when upgrading between compatible releases.
 
 ## Getting started
 
@@ -202,7 +202,7 @@ teleportation:
 | `teleportation.cooldown-seconds` | Cooldown after teleportation. |
 | `teleportation.allow-cross-world` | Allow destinations in different worlds. |
 
-`activation.item` is currently informational: activation is implemented specifically for named `CLOCK` items. `portal.allow-horizontal` is reserved; horizontal gates are not implemented in 1.2.2.
+`activation.item` is currently informational: activation is implemented specifically for named `CLOCK` items. `portal.allow-horizontal` is reserved; horizontal gates are not currently implemented.
 
 Changing the activation block affects newly activated frames after a reload; existing portals remain registered.
 
@@ -275,7 +275,7 @@ mvn clean package
 The compiled, shaded plugin JAR is produced at:
 
 ```text
-target/nexora-1.2.2.jar
+target/nexora-<version>.jar
 ```
 
 The build includes SQLite JDBC in the plugin JAR. Paper API is a provided dependency and is not bundled.
@@ -296,20 +296,9 @@ Removing a gate through Nexora unregisters it and can restore its previously rec
 - Protection against every possible external block-editing mechanism or third-party plugin interaction is not guaranteed.
 - Automated regression test coverage is not yet comprehensive.
 
-## Release highlights
-
-| Version | Highlights |
-|---|---|
-| **1.2.2** | Clickable, paginated in-game help navigation. |
-| **1.2.1** | Expanded help descriptions and examples; fixed repeated `effects.yml` startup warning. |
-| **1.2.0** | Player-managed per-network routing and network information commands. |
-| **1.1.0** | Configurable particle and sound effects. |
-| **1.0.x** | Initial gates, persistent networks, routing, removal, and fixes. |
-
 ## Project information
 
 - **Plugin:** Nexora
-- **Current documented version:** 1.2.2
 - **Author:** iruixos
 - **Platform:** Paper
 - **Package:** `com.iruixos.nexora`
@@ -317,5 +306,5 @@ Removing a gate through Nexora unregisters it and can restore its previously rec
 
 ## License
 
-Reapwright is licensed under the MIT License.
+Nexora is licensed under the MIT License.
 See the [LICENSE](LICENSE) file for details.
