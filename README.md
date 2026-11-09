@@ -5,8 +5,8 @@
 **Build portals. Connect places. Travel instantly.**
 A standalone, server-side water-gate network plugin for **Minecraft Paper 26.3**.
 
-> [!DISCLAIMER]
-> This is directly inspired by the CreativeGates plugin from many years ago, however it does NOT use any source code from that project.
+> [!IMPORTANT]
+> DISCLAIMER: This is directly inspired by the CreativeGates plugin from many years ago, however it does NOT use any source code from that project.
 > Additionally, this project was started before I became aware of the more modern CreativeGates3 plugin.
 > No monetary compensation is collected nor required to use this plugin, and is not intended for wider commercial use.
 > For concerns, please contact me at **iruixos (at) pm (dot) me**
