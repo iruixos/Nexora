@@ -1,0 +1,25 @@
+name: Nexora
+version: '1.2.2'
+main: com.iruixos.nexora.NexoraPlugin
+api-version: '26.3'
+author: iruixos
+description: Original named-clock portal networks for Paper.
+commands:
+  nexora:
+    description: Manage Nexora portal networks
+    usage: /nexora help
+permissions:
+  nexora.use:
+    default: true
+  nexora.create:
+    default: true
+  nexora.destroy.own:
+    default: true
+  nexora.admin:
+    default: op
+  nexora.reload:
+    default: op
+  nexora.network.info:
+    default: true
+  nexora.network.manage:
+    default: true

@@ -1,0 +1,45 @@
+# Nexora 1.1.0 — server-side visual and audio effects.
+# Changes to this file take effect with /nexora reload.
+ambient:
+  enabled: true
+  particle: ENCHANT
+  interval-ticks: 20
+  particles-per-cycle: 4
+  player-range: 24
+
+activation:
+  particles:
+    enabled: true
+    particle: END_ROD
+    count: 35
+  sound:
+    enabled: true
+    type: BLOCK_BEACON_ACTIVATE
+    volume: 0.7
+    pitch: 1.2
+
+deactivation:
+  particles:
+    enabled: true
+    particle: SMOKE
+    count: 20
+  sound:
+    enabled: true
+    type: BLOCK_BEACON_DEACTIVATE
+    volume: 0.6
+    pitch: 1.0
+
+teleport:
+  departure:
+    enabled: true
+    particle: PORTAL
+    count: 30
+  arrival:
+    enabled: true
+    particle: END_ROD
+    count: 20
+  sound:
+    enabled: true
+    type: ENTITY_ENDERMAN_TELEPORT
+    volume: 0.6
+    pitch: 1.2

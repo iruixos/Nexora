@@ -1,0 +1,15 @@
+activation:
+  item: CLOCK
+  activation-block: EMERALD_BLOCK
+  minimum-activation-blocks: 2
+  max-name-length: 32
+portal:
+  max-interior-blocks: 225
+  allow-horizontal: false
+  restore-interior-on-removal: true
+networks:
+  default-routing: PAIR
+  require-authorization-to-join: true
+teleportation:
+  cooldown-seconds: 3
+  allow-cross-world: true
