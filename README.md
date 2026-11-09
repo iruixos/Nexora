@@ -3,135 +3,172 @@
 # Nexora
 
 **Build portals. Connect places. Travel instantly.**
+A standalone, server-side water-gate network plugin for **Minecraft Paper 26.3**.
 
-A lightweight, standalone, server-side portal network plugin for **Minecraft Paper 26.3**.
+> [!DISCLAIMER]
+> This is directly inspired by the CreativeGates plugin from many years ago, however it does NOT use any source code from that project.
+> Additionally, this project was started before I became aware of the more modern CreativeGates3 plugin.
+> No monetary compensation is collected nor required to use this plugin, and is not intended for wider commercial use.
+> For concerns, please contact me at **iruixos (at) pm (dot) me**
 
-**Version 1.2.0** · **Java 25** · **Maven**
-
-</div>
-
-> **Development release:** Nexora 1.2.0 is based on the tested 1.1.0 release; the new network commands need testing on a Paper 26.3 server, but edge cases and long-term reliability still need further validation. Back up your server before deploying.
+---
 
 ## Overview
 
-Nexora lets players construct water-filled teleportation gates in the world. Build a fully enclosed vertical frame with activation blocks, name a clock in an anvil, and use it to activate the frame. Gates with the same name form a network. Players can then walk into a gate to travel to another location, including another world if enabled.
+Nexora allows players to build and connect water-filled portals directly in their Minecraft worlds. Construct an enclosed vertical frame, incorporate the configured activation blocks, and activate it with a **renamed clock**. Gates sharing a name form a persistent network, allowing players to travel between locations and, when enabled, between worlds.
 
-No client-side mods, resource packs, or other server plugins are required.
-
-Nexora is an **original implementation**. It does **not** use source code from CreativeGates or CreativeGates3.
+Networks support independent routing modes, ownership-based management, persistent SQLite storage, and configurable particle and sound effects.
 
 ## Features
 
-- **In-world creation:** Build and activate portals without creation commands.
-- **Configurable activation blocks:** Emerald blocks by default; change to another solid block in `config.yml`.
-- **Flexible frames:** Fully enclosed vertical frames, including supported irregular outlines, up to a configurable interior-cell limit.
-- **Named networks:** Gates sharing a name connect; names are normalized case-insensitively while preserving display capitalization.
-- **Persistent gate UUIDs:** Every gate has its own identifier; gates and network settings are stored in SQLite.
-- **Three routing modes:** `PAIR` (default), `ROUND_ROBIN`, and `RANDOM`.
-- **Ownership checks:** By default, only the network owner or an administrator may add gates to an existing network.
-- **Safe arrivals and cooldowns:** Destination-side exit checks and a configurable teleport cooldown.
-- **Easy gate management:** Look at a gate and use `/nexora info` or `/nexora remove`; administrators can also use abbreviated IDs.
-- **Visual and audio effects (new in 1.1.0):** Ambient particles, activation/deactivation effects, and teleport departure/arrival effects.
-- **Reloadable settings:** `/nexora reload` refreshes both `config.yml` and `effects.yml`.
+- **Build portals in-world:** Activate enclosed vertical frames with a named clock; no creation command required.
+- **Configurable frame materials:** Use emerald blocks by default, or configure another solid activation block and minimum count.
+- **Named networks:** Matching clock names connect gates; network matching is case-insensitive and Unicode-normalized.
+- **Per-network routing:** Choose `PAIR`, `ROUND_ROBIN`, or `RANDOM` independently for each network.
+- **Player-controlled management:** Owners can change their networks' routing without operator access.
+- **Persistent storage:** SQLite records gate UUIDs, ownership, frame data, and network routing settings.
+- **Cross-world travel:** Allow or disallow travel between worlds.
+- **Safer arrivals:** Destination exit checks and teleport cooldowns.
+- **Configurable effects:** Ambient particles, activation/deactivation effects, teleport particles, and sounds.
+- **Interactive help:** Paginated `/nexora help` with clickable navigation arrows and page links.
+- **Permission support:** Works with Paper permissions and permission managers such as LuckPerms.
+- **Standalone deployment:** No client-side mods or additional server plugins required.
 
 ## Requirements
 
-| Requirement | Version |
+| Component | Requirement |
 |---|---|
-| Server | Paper 26.3 |
+| Minecraft server | Paper 26.3 |
 | Java runtime | Java 25 |
-| Build tool (source only) | Maven 3.9+ |
-| Client mods | None |
-| Required server plugins | None |
+| Build system | Maven 3.9+ (for source builds) |
+| Client modifications | None |
+| Other server plugins | None required |
 
 ## Installation
 
-1. Build the source (see below) or obtain a Nexora 1.1.0 JAR.
-2. Stop the Paper server.
-3. Place the JAR in the server's `plugins/` directory.
-4. Start the server to generate `plugins/Nexora/config.yml`, `plugins/Nexora/effects.yml`, and the SQLite database.
-5. Customize settings and run `/nexora reload`, or restart the server.
+1. Obtain a compiled Nexora JAR, or [build it from source](#building-from-source).
+2. Stop your Paper server.
+3. Place the JAR in the server's `plugins/` folder.
+4. Start the server. Nexora creates its configuration files and SQLite database in `plugins/Nexora/`.
+5. Edit `config.yml` and `effects.yml` as desired, then run `/nexora reload` or restart.
 
-**Upgrading:** Back up `plugins/Nexora/`, especially `gates.db`, before replacing the JAR. Version 1.2.0 preserves the existing SQLite schema; no migration is needed from 1.1.0.
+> [!IMPORTANT]
+> When upgrading, back up the entire `plugins/Nexora/` directory—especially `gates.db`—before replacing the JAR. Existing gate and network data should be retained when upgrading from 1.2.x.
 
-## Creating and using gates
+## Getting started
 
-1. Construct a **fully enclosed vertical portal frame**. Include at least **two emerald blocks** in the frame boundary (or the configured activation material and count).
-2. Rename a **clock** in an anvil, for example `Village`.
-3. Hold the named clock and **right-click a frame block on its inward-facing side**, targeting an empty interior space.
-4. The portal fills with water and is registered.
-5. Construct a second portal and activate it with a clock bearing the **same name**.
-6. Walk into either portal to teleport. Keep a **clear, dry, two-block-high standing area with a solid floor** beside the receiving gate.
+### Create your first portal
 
-The activation clock is not consumed. Portal activation currently requires a renamed clock and a frame whose interior is air or water.
+1. Build a **fully enclosed vertical frame** with space inside for the water portal.
+2. Include at least **two emerald blocks** in its boundary (or the activation block and minimum count configured by your server).
+3. Rename a **clock** in an anvil—for example, `vette test`.
+4. Hold the named clock and **right-click a frame block from its interior-facing side**, targeting the empty portal interior.
+5. Nexora registers the gate and fills its interior with water.
+6. Build another frame and activate it with a clock bearing the **same name**.
+7. Walk into either gate to travel to the other, provided the destination has a valid exit.
 
-### Naming and ownership
+The clock is **not consumed**. Ensure that the destination gate has a clear, dry, two-block-high standing space with a solid floor adjacent to its portal.
 
-Network names are trimmed, Unicode NFKC-normalized, and lowercased with `Locale.ROOT` for matching. For example, `Village` and `VILLAGE` belong to the same network; the first network's display capitalization is retained.
+### How network names work
 
-The creator of the first gate owns the network. When `networks.require-authorization-to-join` is enabled, only that owner or a player with `nexora.admin` can add another gate to it. Each individual gate also records its creator's UUID.
+Gates activated with clocks named `vette test`, `VETTE TEST`, or `Vette Test` belong to the same network. Matching ignores case after trimming and Unicode normalization; the original network display name is retained.
 
-### Routing modes
+The creator of the first gate owns the network. With network join authorization enabled, only the owner or an administrator may add gates to that network.
+
+## Network routing
+
+Each network has its **own routing mode**, stored persistently. Changing one network does not affect any other network.
 
 | Mode | Behavior |
 |---|---|
-| `PAIR` | **Default.** Maximum two gates per network. Attempting a third gate is rejected without altering the frame. |
-| `ROUND_ROBIN` | Fixed directional cycle in stable UUID order; each source goes to the next eligible gate, wrapping at the end. The ordering survives restarts. |
-| `RANDOM` | Chooses a random eligible destination other than the source gate. |
+| `PAIR` | Default. A network may contain up to two gates, which connect to each other. |
+| `ROUND_ROBIN` | Fixed directional cycle through the network's gates in stable UUID order; the order persists across restarts. |
+| `RANDOM` | Selects a random eligible destination, excluding the gate being entered. |
 
-The global `networks.default-routing` setting applies to **new networks**. Owners can change their own networks with `/nexora network routing <mode>` while looking at a gate. Administrators can still use `/nexora routing <network> <mode>`. A network with more than two gates cannot be switched to `PAIR` until excess gates are removed.
+### Example: expand a paired network
 
-An unpaired gate can exist but has no destination until another eligible gate joins its network.
+Suppose you've already created two gates using clocks named `vette test` and want to add a third.
+
+1. Stand within eight blocks and look at either existing gate.
+2. Run `/nexora network routing round_robin`.
+3. Build and activate a third gate with the clock name `vette test`.
+4. All three gates now participate in the network's fixed directional cycle.
+
+To use random routing instead:
+
+```text
+/nexora network routing random
+```
+
+To return to two-gate pairing, first remove the extra gate and then run:
+
+```text
+/nexora network routing pair
+```
+
+You can also specify the network by name, including names with spaces:
+
+```text
+/nexora network routing round_robin vette test
+```
+
+> [!NOTE]
+> `PAIR` cannot be enabled while more than two gates remain in a network. The `networks.default-routing` setting only affects **newly created networks**; it does not overwrite existing networks' routing settings.
 
 ## Commands
 
-| Command | Description | Access |
-|---|---|---|
-| `/nexora help` | Show available commands | Everyone |
-| `/nexora network info` | Inspect the targeted gate's network | Network info permission |
-| `/nexora network info <name>` | Inspect a network by name (spaces supported) | Network info permission |
-| `/nexora network list` | List your networks; admins see all | Network info permission |
-| `/nexora network routing <pair\|round_robin\|random>` | Change routing of the targeted gate's network | Owner + manage permission / admin |
-| `/nexora network routing <mode> <name>` | Change routing by network name, including from console | Owner + manage permission / admin |
-| `/nexora info` | Inspect the gate you are looking at (within 8 blocks) | Player |
-| `/nexora remove` | Remove the targeted gate, subject to ownership and permission checks | Owner / admin |
-| `/nexora list` | List registered gates with short IDs | Admin |
-| `/nexora remove <short-id>` | Remove a gate by a unique abbreviated UUID | Admin |
-| `/nexora remove <uuid>` | Remove a gate by full UUID (also available from console) | Admin |
-| `/nexora routing <network> <PAIR\|ROUND_ROBIN\|RANDOM>` | Change a network's routing mode | Admin |
-| `/nexora reload` | Reload the main and effects configurations | Reload permission |
+### Player commands
 
-**Tip:** Look at the portal's water or adjacent frame before running `/nexora info` or `/nexora remove`. You do not need to type a UUID for normal removal.
+| Command | Description |
+|---|---|
+| `/nexora` or `/nexora help` | Open the paginated help menu. |
+| `/nexora help <page>` | Open a specific help page; arrows and page numbers are clickable in chat. |
+| `/nexora info` | Look at a gate within eight blocks to see its ID and owner. |
+| `/nexora remove` | Look at a gate to remove it safely, subject to ownership and permissions. |
+| `/nexora network info` | Inspect the network of the gate you're looking at. |
+| `/nexora network info <name>` | Inspect a network by name. Names with spaces are supported. |
+| `/nexora network list` | List networks you own. |
+| `/nexora network routing <mode>` | Change routing for the targeted gate's network, if you own it. |
+| `/nexora network routing <mode> <name>` | Change routing for a named network, if you own it. |
+
+Accepted routing modes: `pair`, `round_robin`, `random`.
+
+### Administrator commands
+
+| Command | Description |
+|---|---|
+| `/nexora list` | List all registered gates and abbreviated UUIDs. |
+| `/nexora remove <short-id>` | Remove a gate by a unique UUID prefix. |
+| `/nexora remove <uuid>` | Remove a gate by its full UUID. |
+| `/nexora routing <network> <mode>` | Legacy administrative routing command; uses a single-token network argument. |
+| `/nexora network routing <mode> <name>` | Set routing by network name, including names with spaces. |
+| `/nexora reload` | Reload `config.yml` and `effects.yml`. |
+
+The console can use commands that accept an explicit network name or gate ID. Commands that require looking at a gate are player-only.
 
 ## Permissions
 
-| Permission | Description | Default |
+| Permission | Default | Purpose |
 |---|---|---|
-| `nexora.use` | Enter gates and teleport | `true` |
-| `nexora.create` | Activate new gates | `true` |
-| `nexora.destroy.own` | Remove gates you created using `/nexora remove` | `true` |
-| `nexora.admin` | Admin commands, removal by ID, and ownership override | `op` |
-| `nexora.reload` | Reload `config.yml` and `effects.yml` | `op` |
-| `nexora.network.info` | Inspect networks and list networks you own | `true` |
-| `nexora.network.manage` | Change routing of networks you own | `true` |
+| `nexora.use` | `true` | Enter portals and teleport. |
+| `nexora.create` | `true` | Create gates using named clocks. |
+| `nexora.destroy.own` | `true` | Remove gates you created with `/nexora remove`. |
+| `nexora.network.info` | `true` | Inspect network information and list your networks. |
+| `nexora.network.manage` | `true` | Change routing for networks you own. |
+| `nexora.admin` | `op` | Administrative commands and ownership bypass. |
+| `nexora.reload` | `op` | Reload plugin configuration and effects. |
 
-The nodes work with LuckPerms or Paper's built-in permission system. The `nexora.destroy.own` check applies to command-based removal; frame-breaking protection separately checks ownership and requires explicit removal first.
-
-Example LuckPerms grants:
+Default player permissions generally require no additional LuckPerms grants. To explicitly assign network management to a group, for example:
 
 ```text
-/lp group default permission set nexora.use true
-/lp group default permission set nexora.create true
-/lp group default permission set nexora.destroy.own true
-/lp group admin permission set nexora.admin true
-/lp group admin permission set nexora.reload true
+/lp group default permission set nexora.network.manage true
 ```
 
-The first three permissions already default to `true`, so explicit grants are optional.
+Network ownership restrictions still apply: `nexora.network.manage` does **not** permit editing someone else's network.
 
 ## Configuration
 
-`plugins/Nexora/config.yml`:
+Nexora generates `plugins/Nexora/config.yml`:
 
 ```yaml
 activation:
@@ -156,23 +193,29 @@ teleportation:
 
 | Setting | Description |
 |---|---|
-| `activation.item` | Declared activation item; the current implementation requires a named `CLOCK`. |
-| `activation.activation-block` | Solid material required in the frame boundary, e.g. `GOLD_BLOCK`. |
-| `activation.minimum-activation-blocks` | Minimum count of that material in the boundary. |
-| `activation.max-name-length` | Maximum gate-name length. |
-| `portal.max-interior-blocks` | Upper limit for portal interior detection. |
-| `portal.allow-horizontal` | Reserved configuration; horizontal portals are **not yet implemented**. |
-| `portal.restore-interior-on-removal` | Restore recorded interior blocks when a gate is removed, where safe. |
-| `networks.default-routing` | Routing mode assigned when a network is first created. |
-| `networks.require-authorization-to-join` | Restrict joining existing networks to the owner or admins. |
-| `teleportation.cooldown-seconds` | Prevent immediate repeated teleportation. |
-| `teleportation.allow-cross-world` | Permit destinations in other worlds. |
+| `activation.activation-block` | Solid frame material required for activation; e.g., `GOLD_BLOCK`. |
+| `activation.minimum-activation-blocks` | Minimum number of activation blocks in the frame. |
+| `activation.max-name-length` | Maximum length of a gate's clock name. |
+| `portal.max-interior-blocks` | Maximum detected portal interior size. |
+| `portal.restore-interior-on-removal` | Restore recorded interior blocks when removing a gate, where applicable. |
+| `networks.default-routing` | Routing mode for **new** networks. |
+| `networks.require-authorization-to-join` | Restrict adding gates to network owners and admins. |
+| `teleportation.cooldown-seconds` | Cooldown after teleportation. |
+| `teleportation.allow-cross-world` | Allow destinations in different worlds. |
 
-Changes to the activation material are applied to **newly created gates** after `/nexora reload`; existing gates do not need to be recreated.
+`activation.item` is currently informational: activation is implemented specifically for named `CLOCK` items. `portal.allow-horizontal` is reserved; horizontal gates are not implemented in 1.2.2.
 
-## Effects (new in 1.1.0)
+Changing the activation block affects newly activated frames after a reload; existing portals remain registered.
 
-`plugins/Nexora/effects.yml`:
+### Particle and sound effects
+
+The separate `plugins/Nexora/effects.yml` controls:
+
+- Ambient particles around active gates, including particle type, interval, count, and player range.
+- Activation and deactivation particle bursts and sounds.
+- Teleport departure and arrival particles, plus teleport sounds.
+
+Example settings:
 
 ```yaml
 ambient:
@@ -220,87 +263,60 @@ teleport:
     pitch: 1.2
 ```
 
-**Ambient effects** run periodically near active gates with nearby players. Particle type, count, interval, and detection range are configurable.
-
-**Activation and deactivation effects** play when gates are created or removed.
-
-**Teleport effects** create particle bursts at departure and arrival, accompanied by a configurable sound.
-
-Effect settings can be changed and applied with `/nexora reload`. Invalid particle or sound identifiers may prevent the corresponding effect from appearing; use identifiers supported by your Paper version.
+Use `/nexora reload` to apply changes. Ambient particles are skipped for unloaded chunks and when no player is nearby, avoiding unnecessary decorative chunk loading.
 
 ## Building from source
 
-Install **JDK 25** and **Maven 3.9+**. From the project directory (containing `pom.xml`), run:
+Install **JDK 25** and **Maven 3.9+**, then from the directory containing `pom.xml` run:
 
 ```bash
 mvn clean package
 ```
 
-The shaded plugin JAR will be generated at:
+The compiled, shaded plugin JAR is produced at:
 
 ```text
-target/nexora-1.2.0.jar
+target/nexora-1.2.2.jar
 ```
 
-The build bundles SQLite JDBC. You do not need to install the JDBC library separately.
+The build includes SQLite JDBC in the plugin JAR. Paper API is a provided dependency and is not bundled.
+
+## Data storage and backups
+
+Nexora stores portal and network information in `plugins/Nexora/gates.db`. Keep this file when upgrading or migrating your server. Back up the database while the server is stopped, or use a SQLite-aware backup procedure, to avoid inconsistent copies.
+
+Removing a gate through Nexora unregisters it and can restore its previously recorded interior blocks. Removing the final gate from a network also removes that empty network's record.
 
 ## Known limitations
 
-- Only **vertical, water-filled** portals are implemented. Horizontal and alternative visual portal styles are not yet available.
-- Portal safety checks require a valid landing space; not every enclosed or obstructed frame can serve as a destination.
-- Network authorization currently supports the original owner and admins, not a player-managed membership list.
-- The fixed round-robin order is based on gate UUIDs, not chronological creation order.
-- Database access is synchronous in the current implementation.
-- Database writes and world block changes are not atomic across unexpected crashes; recovery/reconciliation needs further work.
-- Full coverage for explosions, pistons, bucket actions, and all possible world-edit interactions is not yet implemented.
-- The project does not yet include a comprehensive automated test suite.
+- Only vertical, water-filled gates are supported; horizontal gates are not implemented.
+- Destination portals require a suitable arrival area.
+- Network membership management is owner/admin-based; there is no player-managed invitation list.
+- Round-robin routing follows UUID order, not gate creation order.
+- SQLite access is synchronous, and database/world-block changes are not crash-atomic.
+- Protection against every possible external block-editing mechanism or third-party plugin interaction is not guaranteed.
+- Automated regression test coverage is not yet comprehensive.
 
-## Changelog
+## Release highlights
 
-### 1.2.0 — Network Management
+| Version | Highlights |
+|---|---|
+| **1.2.2** | Clickable, paginated in-game help navigation. |
+| **1.2.1** | Expanded help descriptions and examples; fixed repeated `effects.yml` startup warning. |
+| **1.2.0** | Player-managed per-network routing and network information commands. |
+| **1.1.0** | Configurable particle and sound effects. |
+| **1.0.x** | Initial gates, persistent networks, routing, removal, and fixes. |
 
-- Added `/nexora network info`, `/nexora network list`, and `/nexora network routing`.
-- Network owners can change their own routing mode without administrator privileges.
-- Added `nexora.network.info` and `nexora.network.manage` permissions.
-- New network commands support names containing spaces and targeted-gate selection.
-- Round-robin now uses a deterministic directional cycle, ordered by gate UUID.
-- Existing administrator routing command retained for compatibility.
-- Existing gate data and per-network routing modes preserved.
+## Project information
 
-
-### 1.1.0 — Portal Effects Update
-
-- Added ambient particles around active portals when players are nearby.
-- Added configurable activation and deactivation particle/sound effects.
-- Added teleport departure and arrival particle effects and teleport sounds.
-- Introduced `effects.yml` with adjustable particle density, frequency, range, volume, and pitch.
-- Extended `/nexora reload` to reload the effects configuration.
-- No new permissions or database migration required.
-
-### 1.0.3 — Targeting and Teleport Fixes
-
-- Corrected destination portal exit orientation.
-- Added targeted `/nexora remove` and improved `/nexora info`.
-- Added admin removal using abbreviated UUIDs and tab completion.
-- Enforced the `nexora.destroy.own` permission for owner-initiated command removal.
-
-### 1.0.2 — Configuration and Arrival Fixes
-
-- Fixed hardcoded emerald activation blocks so `activation.activation-block` is respected.
-- Improved safe-arrival position searching.
+- **Plugin:** Nexora
+- **Current documented version:** 1.2.2
+- **Author:** iruixos
+- **Platform:** Paper
+- **Package:** `com.iruixos.nexora`
+- **Notes:** This project contains AI-generated code, but was tested by a human in a real PaperMC server :)
 
 ## License
 
-No CreativeGates or CreativeGates3 source code is included. A project license has not yet been selected; add a `LICENSE` file before public distribution.
-
-### 1.2.2 — Help Menu & Startup Fix
-
-- `/nexora help [1|2|3]` now displays three colour-coded pages of command descriptions, routing modes, examples, and permissions.
-- Help visibility reflects permissions for management and administration commands.
-- `/nexora` opens page 1; tab completion suggests help pages.
-- Avoids repeated `effects.yml` save warnings at server startup.
-
-### 1.2.2 — Clickable Help Navigation
-
-- Added interactive Previous/Next arrows and direct page links to `/nexora help`.
-- Hover tooltips explain the page destination; commands still work manually and from console.
+Reapwright is licensed under the MIT License.
+See the [LICENSE](LICENSE) file for details.
