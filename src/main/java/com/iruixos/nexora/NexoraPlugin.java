@@ -22,6 +22,15 @@ import java.util.*;
 public final class NexoraPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
     private GateStore store;
     private PortalEffects effects;
+    private PortalWaterOverlay waterOverlay;
+    private WaterFrameExperiment waterFrame;
+    private EventHorizonRenderer horizon;
+    private NexoraResourcePack resourcePack;
+    private LegacyPortalFallback fallback;
+    Collection<Gate> fallbackGates(){return List.copyOf(gates.values());}
+    private boolean horizonMode(){return getConfig().getString("portal.render-mode","WATER").equalsIgnoreCase("EVENT_HORIZON");}
+    // Per-player, client-only preview. Never modifies the server world.
+    private final Map<UUID, Set<Location>> waterPreview = new HashMap<>();
     private final Map<UUID,Gate> gates=new LinkedHashMap<>();
     private final Map<String,UUID> occupied=new HashMap<>();
     private final Map<UUID,Long> cooldowns=new HashMap<>();
@@ -48,17 +57,112 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
 
     @Override public void onEnable(){
         saveDefaultConfig();
+        if (!ConfigMigration.migrate(this)) {
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
+        reloadConfig();
         try {store=new GateStore(getDataFolder().toPath().resolve("gates.db"));for(Gate g:store.load())register(g);}
         catch(Exception e){getLogger().severe("Could not load portal database: "+e.getMessage());getServer().getPluginManager().disablePlugin(this);return;}
         effects=new PortalEffects(this, () -> List.copyOf(gates.values()));
         effects.start();
+        waterOverlay=new PortalWaterOverlay(this);
+        waterFrame=new WaterFrameExperiment(this);
+        horizon=new EventHorizonRenderer(this);
+        fallback=new LegacyPortalFallback(this,horizon);
+        horizon.onSpawn(fallback::onDisplaySpawn);
+        getServer().getPluginManager().registerEvents(fallback,this);
+        resourcePack=new NexoraResourcePack(this);
+        resourcePack.start();
         getServer().getPluginManager().registerEvents(this,this);
+        // Periodic validation catches explosions, piston movement, external edits and
+        // changes made while the gate was unloaded. Never force-load chunks.
+        getServer().getScheduler().runTaskTimer(this,this::validateLoadedGates,40L,40L);
+        getServer().getScheduler().runTaskTimer(this,()->horizon.sync(gates.values()),30L,40L);
+        getServer().getScheduler().runTaskTimer(this,()->waterFrame.tick(gates.values()),20L,10L);
+        getServer().getScheduler().runTaskTimer(this,()->fallback.tick(),50L,20L);
         Objects.requireNonNull(getCommand("nexora")).setExecutor(this);
         Objects.requireNonNull(getCommand("nexora")).setTabCompleter(this);
         logStartupBanner();
         getLogger().info("Loaded "+gates.size()+" portals");
     }
-    @Override public void onDisable(){if(effects!=null)effects.stop();if(store!=null)try{store.close();}catch(SQLException e){getLogger().warning(e.getMessage());}}
+    @EventHandler public void onPackJoin(PlayerJoinEvent event) {
+        if (resourcePack != null) {
+            getServer().getScheduler().runTaskLater(this, () -> {
+                if (event.getPlayer().isOnline()) resourcePack.send(event.getPlayer());
+            }, 40L);
+        }
+    }
+    @EventHandler public void onPreviewQuit(PlayerQuitEvent event){
+        waterPreview.remove(event.getPlayer().getUniqueId());
+        waterFrame.forget(event.getPlayer());
+    }
+    private void clearWaterPreview(Player player){
+        Set<Location> locations=waterPreview.remove(player.getUniqueId());
+        if(locations==null)return;
+        waterFrame.resumePreview(player,locations);
+        for(Location location:locations){
+            if(location.getWorld()!=null && location.getWorld().isChunkLoaded(location.getBlockX()>>4,location.getBlockZ()>>4)){
+                player.sendBlockChange(location,location.getBlock().getBlockData());
+            }
+        }
+    }
+    private void waterPreviewCommand(CommandSender sender,String[] args){
+        if(!(sender instanceof Player player)){sender.sendMessage("§cPlayer-only preview.");return;}
+        if(!sender.hasPermission("nexora.admin")){sender.sendMessage("§cAdministrator permission required.");return;}
+        if(args.length!=2 || !List.of("water","waterlogged","reset").contains(args[1].toLowerCase(Locale.ROOT))){
+            sender.sendMessage("§eUsage: /nexora waterpreview <water|waterlogged|reset>");return;
+        }
+        clearWaterPreview(player);
+        String mode=args[1].toLowerCase(Locale.ROOT);
+        if(mode.equals("reset")){sender.sendMessage("§aPreview reset.");return;}
+        Gate gate=targetedGate(player);
+        if(gate==null){sender.sendMessage("§eLook toward a registered portal within 12 blocks.");return;}
+        World world=gate.world();
+        if(world==null)return;
+        int top=gate.cells.stream().mapToInt(c->Gate.coords(c)[1]).max().orElse(Integer.MIN_VALUE);
+        Set<Location> changed=new HashSet<>();
+        int unsupported=0;
+        for(String cell:gate.cells){
+            int[] xyz=Gate.coords(cell);
+            if(xyz[1]!=top || !world.isChunkLoaded(xyz[0]>>4,xyz[2]>>4))continue;
+            Block frame=world.getBlockAt(xyz[0],xyz[1]+1,xyz[2]);
+            BlockData preview;
+            if(mode.equals("water")){
+                preview=Bukkit.createBlockData(Material.WATER);
+            }else{
+                preview=frame.getBlockData().clone();
+                if(!(preview instanceof org.bukkit.block.data.Waterlogged waterlogged)){
+                    unsupported++;continue;
+                }
+                waterlogged.setWaterlogged(true);
+            }
+            player.sendBlockChange(frame.getLocation(),preview);
+            changed.add(frame.getLocation());
+        }
+        if(!changed.isEmpty()){
+            waterFrame.suspendPreview(player,changed);
+            waterPreview.put(player.getUniqueId(),changed);
+            // Restore the actual frame states after 15 seconds, even if no command is run.
+            getServer().getScheduler().runTaskLater(this,()->clearWaterPreview(player),300L);
+        }
+        sender.sendMessage("§eClient-only "+mode+" preview on "+changed.size()+" top-frame blocks; restores in 15 seconds.");
+        if(unsupported>0)sender.sendMessage("§7"+unsupported+" frame blocks cannot be waterlogged.");
+        if(mode.equals("water"))sender.sendMessage("§7The frame will appear as water temporarily. This is intentional for the rendering test.");
+    }
+    private void waterFrameDebug(CommandSender sender){
+        if(!sender.hasPermission("nexora.admin")){sender.sendMessage("§cAdministrator permission required.");return;}
+        sender.sendMessage("§bNexora water-frame diagnostics:");
+        sender.sendMessage("§7Enabled: §f"+getConfig().getBoolean("portal.experimental-water-frame.enabled",false)
+                +" §7Registered gates: §f"+gates.size());
+        for(String line:waterFrame.debugLines())sender.sendMessage("§7"+line);
+        if(sender instanceof Player player){
+            Gate gate=targetedGate(player);
+            sender.sendMessage(gate==null?"§eTarget: no gate in view within 12 blocks."
+                    :"§aTarget: "+gate.networkDisplay+" §7("+gate.id+") §7interior="+gate.cells.size());
+        }
+    }
+    @Override public void onDisable(){if(fallback!=null)fallback.reset();for(Player player:Bukkit.getOnlinePlayers())clearWaterPreview(player);if(resourcePack!=null)resourcePack.stop();if(waterFrame!=null)waterFrame.clear();if(horizon!=null)horizon.clear();if(waterOverlay!=null)waterOverlay.clear();if(effects!=null)effects.stop();if(store!=null)try{store.close();}catch(SQLException e){getLogger().warning(e.getMessage());}}
     private void register(Gate g){gates.put(g.id,g);for(String c:g.cells)occupied.put(blockKey(g.worldId,c),g.id);}
     private void unregister(Gate g){gates.remove(g.id);for(String c:g.cells)occupied.remove(blockKey(g.worldId,c));}
     private String normalized(String name){return Normalizer.normalize(name.strip(),Normalizer.Form.NFKC).toLowerCase(Locale.ROOT);}
@@ -95,13 +199,30 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
             }
             Map<String,String> originals=new LinkedHashMap<>();List<String> cells=new ArrayList<>();
             for(Block b:frame.interior()){String c=Gate.key(b);cells.add(c);originals.put(c,b.getBlockData().getAsString());}
-            Gate gate=new Gate(UUID.randomUUID(),start.getWorld().getUID(),p.getUniqueId(),key,net==null?display:net.display(),frame.plane(),cells,originals);
+            Gate gate=new Gate(UUID.randomUUID(),start.getWorld().getUID(),p.getUniqueId(),key,net==null?display:net.display(),frame.plane(),cells,originals,null);
+            // A gate must have an unambiguous creator-facing exit direction.
+            // Never infer a side from a player standing inside the portal plane.
+            double planeAxis = 0.0;
+            for (String cell : gate.cells) {
+                int[] xyz = Gate.coords(cell);
+                planeAxis += (gate.plane.equals("X") ? xyz[2] : xyz[0]) + 0.5;
+            }
+            planeAxis /= gate.cells.size();
+            double creatorAxis = gate.plane.equals("X") ? p.getLocation().getZ() : p.getLocation().getX();
+            if (Math.abs(creatorAxis - planeAxis) < 0.35) {
+                p.sendMessage("§eStand clearly on the side of the gate where arriving players should exit, then activate it again.");
+                return;
+            }
+            gate.setPreferredExit(gate.sideFrom(p.getLocation()));
             if(net==null)store.insertNetwork(new GateStore.Network(key,display,p.getUniqueId(),canonicalRouting(getConfig().getString("networks.default-routing","PAIR"))));
             try{store.insert(gate);}catch(SQLException ex){if(net==null)store.deleteEmptyNetwork(key);throw ex;}
             register(gate);
-            for(Block b:frame.interior())b.setType(Material.WATER,false);
+            for(Block b:frame.interior())if(horizonMode())b.setType(Material.AIR,false);else setFullWaterSource(b);
+            getServer().getScheduler().runTask(this, () -> {
+                if(gates.containsKey(gate.id)){if(!horizonMode()){refreshPortalWater(gate);waterOverlay.sync(gate);waterFrame.refresh(gates.values());}horizon.sync(gates.values());}
+            });
             effects.activation(gate);
-            p.sendMessage("§aGate created: §f"+gate.networkDisplay+" §7("+gate.id+")");
+            p.sendMessage("§aGate created: §f" + gate.networkDisplay + " §7(" + gate.id + ") §aExit: §f" + gate.preferredExit().name());
         }catch(SQLException ex){getLogger().severe("Create gate failed: "+ex.getMessage());p.sendMessage("§cDatabase error. Gate not created.");}
     }
     @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)
@@ -109,7 +230,7 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
         if(e.getTo()==null||e.getFrom().getBlock().equals(e.getTo().getBlock()))return;
         Player p=e.getPlayer();if(!p.hasPermission("nexora.use"))return;
         UUID id=occupied.get(blockKey(e.getTo().getWorld().getUID(),Gate.key(e.getTo().getBlock())));
-        if(id==null)return;
+        if(id==null || (horizonMode() ? !e.getTo().getBlock().getType().isAir() : e.getTo().getBlock().getType()!=Material.WATER))return;
         long now=System.currentTimeMillis();if(cooldowns.getOrDefault(p.getUniqueId(),0L)>now)return;
         Gate source=gates.get(id);if(source==null)return;
         try{
@@ -138,7 +259,7 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
             }
             Location arrival=target.arrival();if(arrival==null){p.sendMessage("§cDestination has no safe exit.");return;}
             cooldowns.put(p.getUniqueId(),now+getConfig().getLong("teleportation.cooldown-seconds",3)*1000L);
-            arrival.setYaw(p.getLocation().getYaw());arrival.setPitch(p.getLocation().getPitch());
+            arrival.setPitch(p.getLocation().getPitch());
             Location departure=p.getLocation().clone();
             p.teleportAsync(arrival).thenAccept(success->getServer().getScheduler().runTask(this,()->{
                 if(!p.isOnline())return;
@@ -147,13 +268,95 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
             }));
         }catch(SQLException ex){getLogger().warning("Teleport lookup failed: "+ex.getMessage());}
     }
+    // A gate's interior is protected, but owners may dismantle its frame.
+    // After the break is applied, validation removes the invalid gate and water.
     @EventHandler(priority=EventPriority.HIGH,ignoreCancelled=true)
     public void onBreak(BlockBreakEvent e){
         Block b=e.getBlock();Gate g=gateNear(b);
         if(g==null)return;
-        if(!g.owner.equals(e.getPlayer().getUniqueId())&&!e.getPlayer().hasPermission("nexora.admin")){e.setCancelled(true);e.getPlayer().sendMessage("§cThis gate belongs to another player.");return;}
-        // Block edits are blocked until the owner explicitly removes the gate.
-        e.setCancelled(true);e.getPlayer().sendMessage("§eLook at the gate and use /nexora remove first.");
+        if(!g.owner.equals(e.getPlayer().getUniqueId())&&!e.getPlayer().hasPermission("nexora.admin")){
+            e.setCancelled(true);e.getPlayer().sendMessage("§cThis gate belongs to another player.");return;
+        }
+        if(g.contains(b)){
+            e.setCancelled(true);e.getPlayer().sendMessage("§eUse /nexora remove to remove the portal interior.");return;
+        }
+        getServer().getScheduler().runTask(this,()->validateGateIfLoaded(g));
+    }
+    private boolean allGateChunksLoaded(Gate gate){
+        World world=gate.world();if(world==null)return false;
+        for(String cell:gate.cells){
+            int[] xyz=Gate.coords(cell);
+            if(!world.isChunkLoaded(xyz[0]>>4,xyz[2]>>4))return false;
+        }
+        return true;
+    }
+    // Explicitly set water level to zero (source), including the top row.
+    // Physics are suppressed so nearby fluid updates do not cascade during activation.
+    private void setFullWaterSource(Block block){
+        org.bukkit.block.data.Levelled water=(org.bukkit.block.data.Levelled)
+                Bukkit.createBlockData(Material.WATER);
+        water.setLevel(0);
+        block.setBlockData(water,false);
+    }
+    private void refreshPortalWater(Gate gate){
+        for(String cell:gate.cells){
+            Block block=gate.block(cell);
+            if(block==null || block.getType()!=Material.WATER)continue;
+            if(block.getBlockData() instanceof org.bukkit.block.data.Levelled level && level.getLevel()!=0){
+                setFullWaterSource(block);
+            }
+        }
+    }
+    private boolean frameIntact(Gate gate){
+        World world=gate.world();if(world==null)return true;
+        Set<String> interior=new HashSet<>(gate.cells);
+        BlockFace[] directions=gate.plane.equals("X")
+                ? new BlockFace[]{BlockFace.EAST,BlockFace.WEST,BlockFace.UP,BlockFace.DOWN}
+                : new BlockFace[]{BlockFace.NORTH,BlockFace.SOUTH,BlockFace.UP,BlockFace.DOWN};
+        for(String cell:gate.cells){
+            Block block=gate.block(cell);
+            if(block==null || (horizonMode()? !block.getType().isAir() : block.getType()!=Material.WATER))return false;
+            for(BlockFace face:directions){
+                Block adjacent=block.getRelative(face);
+                if(!world.isChunkLoaded(adjacent.getX()>>4,adjacent.getZ()>>4))continue;
+                if(!interior.contains(Gate.key(adjacent)) && !adjacent.getType().isSolid())return false;
+            }
+        }
+        return true;
+    }
+    private void validateLoadedGates(){
+        for(Gate gate:new ArrayList<>(gates.values()))validateGateIfLoaded(gate);
+        if(!horizonMode())waterOverlay.syncLoaded(gates.values());else waterOverlay.clear();
+        if(!horizonMode())waterFrame.refresh(gates.values());else waterFrame.clear();
+        horizon.sync(gates.values());
+    }
+    private void validateGateIfLoaded(Gate gate){
+        if(!gates.containsKey(gate.id) || !allGateChunksLoaded(gate))return;
+        if(horizonMode() && gate.cells.stream().allMatch(c -> {Block b=gate.block(c);return b!=null && (b.getType()==Material.WATER || b.getType().isAir());})){
+            for(String cell:gate.cells){Block b=gate.block(cell);if(b.getType()==Material.WATER)b.setType(Material.AIR,false);}
+        }
+        if(frameIntact(gate)){
+            if(!horizonMode())refreshPortalWater(gate);
+            return;
+        }
+        try{
+            // Delete the database record before changing world blocks.
+            store.delete(gate.id);
+            waterOverlay.remove(gate.id);
+            waterFrame.remove(gate.id);
+            horizon.remove(gate.id);
+            unregister(gate);
+            store.deleteEmptyNetwork(gate.networkKey);
+            effects.deactivation(gate);
+            for(String cell:gate.cells){
+                Block block=gate.block(cell);
+                if(block!=null && (block.getType()==Material.WATER || (horizonMode() && block.getType().isAir()))){
+                    // Clear the old portal interior without spawning floating water.
+                    block.setType(Material.AIR,false);
+                }
+            }
+            getLogger().info("Deactivated gate "+gate.id+" (frame damaged or portal interior changed).");
+        }catch(SQLException ex){getLogger().severe("Could not deactivate damaged gate: "+ex.getMessage());}
     }
     @EventHandler(priority=EventPriority.HIGH,ignoreCancelled=true)
     public void onPlace(BlockPlaceEvent e){if(occupied.containsKey(blockKey(e.getBlock().getWorld().getUID(),Gate.key(e.getBlock()))))e.setCancelled(true);}
@@ -161,21 +364,44 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
     public void onFlow(BlockFromToEvent e){if(occupied.containsKey(blockKey(e.getBlock().getWorld().getUID(),Gate.key(e.getBlock())))||occupied.containsKey(blockKey(e.getToBlock().getWorld().getUID(),Gate.key(e.getToBlock()))))e.setCancelled(true);}
     @EventHandler(priority=EventPriority.HIGH,ignoreCancelled=true)
     public void onBucket(org.bukkit.event.player.PlayerBucketEmptyEvent e){if(occupied.containsKey(blockKey(e.getBlock().getWorld().getUID(),Gate.key(e.getBlock()))))e.setCancelled(true);}
+    // Select by the actual registered gate geometry, not whichever block a ray first hits.
+    // This also handles aiming at the gold activation block or any part of the frame.
     private Gate targetedGate(Player player){
-        // Trace through air and portal water. Standard getTargetBlockExact stops at solid frame blocks.
         Location eye=player.getEyeLocation();
         org.bukkit.util.Vector direction=eye.getDirection().normalize();
-        for(double distance=0.25;distance<=8.0;distance+=0.20){
-            Location point=eye.clone().add(direction.clone().multiply(distance));
-            Block block=point.getBlock();
-            UUID id=occupied.get(blockKey(block.getWorld().getUID(),Gate.key(block)));
-            if(id!=null)return gates.get(id);
-            if(block.getType().isSolid()){
-                // Allow targeting a solid portal frame immediately adjacent to an interior cell.
-                return gateNear(block);
+        Gate best=null;
+        double bestAlong=Double.POSITIVE_INFINITY;
+        for(Gate gate:gates.values()){
+            if(!gate.worldId.equals(player.getWorld().getUID()) || gate.cells.isEmpty())continue;
+            double minX=Double.POSITIVE_INFINITY,minY=Double.POSITIVE_INFINITY,minZ=Double.POSITIVE_INFINITY;
+            double maxX=Double.NEGATIVE_INFINITY,maxY=Double.NEGATIVE_INFINITY,maxZ=Double.NEGATIVE_INFINITY;
+            for(String cell:gate.cells){
+                int[] c=Gate.coords(cell);
+                minX=Math.min(minX,c[0]);minY=Math.min(minY,c[1]);minZ=Math.min(minZ,c[2]);
+                maxX=Math.max(maxX,c[0]+1);maxY=Math.max(maxY,c[1]+1);maxZ=Math.max(maxZ,c[2]+1);
             }
+            // Include the entire surrounding frame, including the top activation block.
+            minX-=1;minY-=1;minZ-=1;maxX+=1;maxY+=1;maxZ+=1;
+            org.bukkit.util.Vector origin=eye.toVector();
+            double tMin=0,tMax=12;
+            double[] origins={origin.getX(),origin.getY(),origin.getZ()};
+            double[] dirs={direction.getX(),direction.getY(),direction.getZ()};
+            double[] mins={minX,minY,minZ},maxs={maxX,maxY,maxZ};
+            boolean hit=true;
+            for(int axis=0;axis<3;axis++){
+                if(Math.abs(dirs[axis])<1.0e-9){
+                    if(origins[axis]<mins[axis] || origins[axis]>maxs[axis]){hit=false;break;}
+                    continue;
+                }
+                double t1=(mins[axis]-origins[axis])/dirs[axis];
+                double t2=(maxs[axis]-origins[axis])/dirs[axis];
+                tMin=Math.max(tMin,Math.min(t1,t2));
+                tMax=Math.min(tMax,Math.max(t1,t2));
+                if(tMax<tMin){hit=false;break;}
+            }
+            if(hit && tMin<bestAlong){best=gate;bestAlong=tMin;}
         }
-        return null;
+        return best;
     }
     private Gate resolveGate(String identifier){
         try {return gates.get(UUID.fromString(identifier));}catch(IllegalArgumentException ignored){}
@@ -253,6 +479,47 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
             default->sender.sendMessage("§cUsage: /nexora network <info|list|routing>");
         }
     }
+    private void exitCommand(CommandSender sender,String[] args) throws SQLException {
+        if(args.length!=2 || !List.of("set","info","reset").contains(args[1].toLowerCase(Locale.ROOT))){
+            sender.sendMessage("§eUsage: /nexora exit <set|info|reset>");return;
+        }
+        if(!(sender instanceof Player player)){
+            sender.sendMessage("§cThis command requires a player looking at a gate.");return;
+        }
+        Gate gate=targetedGate(player);
+        if(gate==null){sender.sendMessage("§eLook at a gate within 8 blocks.");return;}
+        String action=args[1].toLowerCase(Locale.ROOT);
+        if(action.equals("info")){
+            if(!sender.hasPermission("nexora.network.info")&&!sender.hasPermission("nexora.admin")){
+                sender.sendMessage("§cNo permission.");return;
+            }
+            sender.sendMessage("§bGate exit: §f"+(gate.preferredExit()==null?"AUTO (legacy)":gate.preferredExit().name()));
+            return;
+        }
+        if(!sender.hasPermission("nexora.admin") &&
+                (!gate.owner.equals(player.getUniqueId()) || !sender.hasPermission("nexora.exit.manage"))){
+            sender.sendMessage("§cOnly the gate owner or an administrator can configure its exit.");return;
+        }
+        org.bukkit.block.BlockFace face=action.equals("reset")?null:gate.sideFrom(player.getLocation());
+        // Determine which side the player is on, using their position, not viewing yaw.
+        // Require the player to be clearly on one side of the portal plane.
+        if(face!=null){
+            double axis=0;
+            for(String cell:gate.cells){
+                int[] c=Gate.coords(cell);
+                axis+=(gate.plane.equals("X")?c[2]:c[0])+0.5;
+            }
+            axis/=gate.cells.size();
+            double playerAxis=gate.plane.equals("X")?player.getLocation().getZ():player.getLocation().getX();
+            if(Math.abs(playerAxis-axis)<0.35){
+                sender.sendMessage("§cStand clearly on the desired exit side of the gate.");return;
+            }
+        }
+        store.updateExit(gate.id,face);
+        gate.setPreferredExit(face);
+        sender.sendMessage(face==null?"§aGate exit reset to automatic selection.":
+                "§aPreferred exit set to §f"+face.name()+"§a. Arrivals will face away from the water.");
+    }
     private void helpLine(CommandSender sender, String command, String description) {
         sender.sendMessage("§b" + command + " §7- §f" + description);
     }
@@ -274,6 +541,11 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
                     sender.sendMessage("§bTravel §7- §fWalk into a gate to teleport to another gate.");
                 helpLine(sender, "/nexora help [page]", "Show this guide (pages 1-3).");
                 helpLine(sender, "/nexora info", "Look at a gate to view its ID and owner.");
+                helpLine(sender, "/nexora exit info", "Show the gate's preferred exit direction.");
+                if(sender.hasPermission("nexora.exit.manage") || admin){
+                    helpLine(sender, "/nexora exit set", "Stand on the desired arrival side and look at the gate.");
+                    helpLine(sender, "/nexora exit reset", "Restore legacy automatic exit selection.");
+                }
                 if (sender.hasPermission("nexora.destroy.own") || admin)
                     helpLine(sender, "/nexora remove", "Look at your gate to remove it safely.");
                 sender.sendMessage("§7Example clock name: §fvette test");
@@ -337,6 +609,9 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
         try{
             switch(args[0].toLowerCase(Locale.ROOT)){
                 case "network"->networkCommand(sender,args);
+                case "exit"->exitCommand(sender,args);
+                case "waterpreview"->waterPreviewCommand(sender,args);
+                case "waterframe"->{if(args.length==2 && args[1].equalsIgnoreCase("debug"))waterFrameDebug(sender);else sender.sendMessage("§eUsage: /nexora waterframe debug");}
                 case "list"->{if(!sender.hasPermission("nexora.admin")){sender.sendMessage("§cNo permission.");return true;}sender.sendMessage("§bRegistered gates: "+gates.size());gates.values().forEach(g->sender.sendMessage("§7"+g.id.toString().substring(0,8)+" §f"+g.networkDisplay+" §7"+g.worldId));}
                 case "info"->{if(!(sender instanceof Player p))return true;Gate g=targetedGate(p);sender.sendMessage(g==null?"§eNo gate targeted.":"§b"+g.networkDisplay+" §7ID: "+g.id+" Owner: "+g.owner);}
                 case "remove"->{
@@ -351,11 +626,11 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
                     if(sender instanceof Player p && !g.owner.equals(p.getUniqueId())&&!p.hasPermission("nexora.admin")){sender.sendMessage("§cNo permission.");return true;}
                     if(sender instanceof Player p && g.owner.equals(p.getUniqueId())&&!p.hasPermission("nexora.destroy.own")&&!p.hasPermission("nexora.admin")){sender.sendMessage("§cNo permission to remove your gate.");return true;}
                     effects.deactivation(g);
-                    store.delete(g.id);unregister(g);store.deleteEmptyNetwork(g.networkKey);
-                    if(getConfig().getBoolean("portal.restore-interior-on-removal",true))for(var entry:g.originals.entrySet()){Block b=g.block(entry.getKey());if(b!=null&&b.getType()==Material.WATER)try{b.setBlockData(Bukkit.createBlockData(entry.getValue()),false);}catch(IllegalArgumentException ignored){}}
+                    store.delete(g.id);waterOverlay.remove(g.id);waterFrame.remove(g.id);horizon.remove(g.id);unregister(g);store.deleteEmptyNetwork(g.networkKey);
+                    if(getConfig().getBoolean("portal.restore-interior-on-removal",true))for(var entry:g.originals.entrySet()){Block b=g.block(entry.getKey());if(b!=null&&(b.getType()==Material.WATER || (horizonMode() && b.getType().isAir())))try{b.setBlockData(Bukkit.createBlockData(entry.getValue()),false);}catch(IllegalArgumentException ignored){}}
                     sender.sendMessage("§aGate removed.");}
                 case "routing"->{if(args.length<3||!sender.hasPermission("nexora.admin")){sender.sendMessage("§cUsage: /nexora routing <network> <PAIR|ROUND_ROBIN|RANDOM> (admin)");return true;}String mode=args[2].toUpperCase(Locale.ROOT);if(!List.of("PAIR","ROUND_ROBIN","RANDOM").contains(mode)){sender.sendMessage("§cInvalid mode.");return true;}String key=normalized(args[1]);if(store.network(key)==null){sender.sendMessage("§cNetwork not found.");return true;}if(mode.equals("PAIR")&&networkGates(key).size()>2){sender.sendMessage("§cRemove extra gates before enabling PAIR.");return true;}store.updateRouting(key,mode);sender.sendMessage("§aRouting updated to "+mode);}
-                case "reload"->{if(!sender.hasPermission("nexora.reload")){sender.sendMessage("§cNo permission.");return true;}reloadConfig();effects.reload();sender.sendMessage("§aConfiguration and effects reloaded.");}
+                case "reload"->{if(!sender.hasPermission("nexora.reload")){sender.sendMessage("§cNo permission.");return true;}reloadConfig();effects.reload();waterOverlay.clear();waterOverlay.syncLoaded(gates.values());waterFrame.clear();waterFrame.refresh(gates.values());horizon.clear();horizon.sync(gates.values());fallback.tick();sender.sendMessage("§aConfiguration and effects reloaded.");}
                 default->sender.sendMessage("§cUnknown subcommand. /nexora help");
             }
         }catch(IllegalArgumentException ex){sender.sendMessage("§cInvalid argument: "+ex.getMessage());}
@@ -363,7 +638,10 @@ public final class NexoraPlugin extends JavaPlugin implements Listener, CommandE
         return true;
     }
     @Override public List<String> onTabComplete(CommandSender sender,Command command,String alias,String[] args){
-        if(args.length==1)return List.of("help","network","list","info","remove","routing","reload").stream().filter(s->s.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
+        if(args.length==1)return List.of("help","network","exit","waterpreview","waterframe","list","info","remove","routing","reload").stream().filter(s->s.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
+        if(args.length==2&&args[0].equalsIgnoreCase("waterframe")&&sender.hasPermission("nexora.admin"))return List.of("debug").stream().filter(v->v.startsWith(args[1].toLowerCase(Locale.ROOT))).toList();
+        if(args.length==2&&args[0].equalsIgnoreCase("waterpreview")&&sender.hasPermission("nexora.admin"))return List.of("water","waterlogged","reset").stream().filter(v->v.startsWith(args[1].toLowerCase(Locale.ROOT))).toList();
+        if(args.length==2&&args[0].equalsIgnoreCase("exit"))return List.of("set","info","reset").stream().filter(v->v.startsWith(args[1].toLowerCase(Locale.ROOT))).toList();
         if(args.length==2&&args[0].equalsIgnoreCase("help"))return List.of("1","2","3").stream().filter(v->v.startsWith(args[1])).toList();
         if(args.length==2&&args[0].equalsIgnoreCase("network"))return List.of("info","list","routing").stream().filter(v->v.startsWith(args[1].toLowerCase(Locale.ROOT))).toList();
         if(args.length==3&&args[0].equalsIgnoreCase("network")&&args[1].equalsIgnoreCase("routing"))return List.of("pair","round_robin","random").stream().filter(v->v.startsWith(args[2].toLowerCase(Locale.ROOT))).toList();

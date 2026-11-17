@@ -11,6 +11,12 @@ final class GateStore implements AutoCloseable {
         try(Statement s=db.createStatement()) {
             s.executeUpdate("CREATE TABLE IF NOT EXISTS networks (name_key TEXT PRIMARY KEY, display_name TEXT NOT NULL, owner TEXT NOT NULL, routing TEXT NOT NULL)");
             s.executeUpdate("CREATE TABLE IF NOT EXISTS gates (id TEXT PRIMARY KEY, world TEXT NOT NULL, owner TEXT NOT NULL, network_key TEXT NOT NULL, display_name TEXT NOT NULL, plane TEXT NOT NULL, cells TEXT NOT NULL, originals TEXT NOT NULL)");
+            // Additive migration: existing gate records remain unchanged and use legacy automatic exits.
+            boolean hasExit=false;
+            try(ResultSet columns=s.executeQuery("PRAGMA table_info(gates)")){
+                while(columns.next())if("preferred_exit".equalsIgnoreCase(columns.getString("name")))hasExit=true;
+            }
+            if(!hasExit)s.executeUpdate("ALTER TABLE gates ADD COLUMN preferred_exit TEXT");
         }
     }
     record Network(String key,String display,UUID owner,String routing) {}
@@ -24,10 +30,10 @@ final class GateStore implements AutoCloseable {
         try(PreparedStatement s=db.prepareStatement("UPDATE networks SET routing=? WHERE name_key=?")){s.setString(1,routing);s.setString(2,key);s.executeUpdate();}
     }
     void insert(Gate g) throws SQLException {
-        try(PreparedStatement s=db.prepareStatement("INSERT INTO gates VALUES (?,?,?,?,?,?,?,?)")) {
+        try(PreparedStatement s=db.prepareStatement("INSERT INTO gates (id,world,owner,network_key,display_name,plane,cells,originals,preferred_exit) VALUES (?,?,?,?,?,?,?,?,?)")) {
             s.setString(1,g.id.toString());s.setString(2,g.worldId.toString());s.setString(3,g.owner.toString());s.setString(4,g.networkKey);s.setString(5,g.networkDisplay);s.setString(6,g.plane);
             s.setString(7,String.join(";",g.cells));
-            StringJoiner j=new StringJoiner(";");g.originals.forEach((k,v)->j.add(k+"="+v));s.setString(8,j.toString());s.executeUpdate();
+            StringJoiner j=new StringJoiner(";");g.originals.forEach((k,v)->j.add(k+"="+v));s.setString(8,j.toString());s.setString(9,g.preferredExit()==null?null:g.preferredExit().name());s.executeUpdate();
         }
     }
     List<Gate> load() throws SQLException {
@@ -36,10 +42,22 @@ final class GateStore implements AutoCloseable {
             while(r.next()) {
                 Map<String,String> originals=new HashMap<>();String raw=r.getString("originals");
                 if(!raw.isEmpty())for(String pair:raw.split(";")){int i=pair.indexOf('=');if(i>0)originals.put(pair.substring(0,i),pair.substring(i+1));}
-                result.add(new Gate(UUID.fromString(r.getString("id")),UUID.fromString(r.getString("world")),UUID.fromString(r.getString("owner")),r.getString("network_key"),r.getString("display_name"),r.getString("plane"),List.of(r.getString("cells").split(";")),originals));
+                result.add(new Gate(UUID.fromString(r.getString("id")),UUID.fromString(r.getString("world")),UUID.fromString(r.getString("owner")),r.getString("network_key"),r.getString("display_name"),r.getString("plane"),List.of(r.getString("cells").split(";")),originals,parseExit(r.getString("preferred_exit"))));
             }
         }
         return result;
+    }
+    private static org.bukkit.block.BlockFace parseExit(String value){
+        if(value==null)return null;
+        try{
+            org.bukkit.block.BlockFace face=org.bukkit.block.BlockFace.valueOf(value);
+            return switch(face){case NORTH,SOUTH,EAST,WEST->face;default->null;};
+        }catch(IllegalArgumentException ex){return null;}
+    }
+    void updateExit(UUID id,org.bukkit.block.BlockFace face) throws SQLException {
+        try(PreparedStatement s=db.prepareStatement("UPDATE gates SET preferred_exit=? WHERE id=?")){
+            s.setString(1,face==null?null:face.name());s.setString(2,id.toString());s.executeUpdate();
+        }
     }
     void delete(UUID id) throws SQLException {try(PreparedStatement s=db.prepareStatement("DELETE FROM gates WHERE id=?")){s.setString(1,id.toString());s.executeUpdate();}}
     void deleteEmptyNetwork(String key) throws SQLException {try(PreparedStatement s=db.prepareStatement("DELETE FROM networks WHERE name_key=? AND NOT EXISTS (SELECT 1 FROM gates WHERE network_key=?)")){s.setString(1,key);s.setString(2,key);s.executeUpdate();}}

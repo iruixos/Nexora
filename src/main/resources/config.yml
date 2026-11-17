@@ -1,15 +1,78 @@
+# Nexora configuration schema; managed by automatic migration.
+config-schema-version: 2
 activation:
   item: CLOCK
   activation-block: EMERALD_BLOCK
   minimum-activation-blocks: 2
   max-name-length: 32
 portal:
+  # WATER retains classic real-water gates; EVENT_HORIZON uses air and the optional resource pack.
+  # Back up gates.db and your world before switching modes in this experimental build.
+  render-mode: EVENT_HORIZON
+  # Animated event-horizon appearance (only applies to EVENT_HORIZON mode).
+  # Available textures:
+  #   CLASSIC           - Original blue Stargate-inspired water effect.
+  #   AQUA_FLOW         - Bright turquoise with gentle flowing currents.
+  #   DEEP_ABYSS        - Dark navy-blue with subtle luminous streaks.
+  #   CELESTIAL_VORTEX  - Swirling blue-purple energy effect.
+  #   CRYSTAL_SPRING    - Pale aqua with soft caustics and flowing ripples.
+  #   AZURE_SKY         - Light blue with slow white and silver currents.
+  #   PEARL_LAGOON      - Seafoam green with pearlescent shimmer.
+  #   BUBBLING_POOL     - Calm clear-blue water with gently rising bubbles.
+  # Default: CRYSTAL_SPRING. Restart Paper after changing this setting.
+  # Existing config.yml files: add this option manually; omitted means CRYSTAL_SPRING.
+  texture: CRYSTAL_SPRING
   max-interior-blocks: 225
   allow-horizontal: false
   restore-interior-on-removal: true
+  visual-water-overlay:
+    # Disabled by default: experimental glass strip did not blend with water.
+    # This uses non-persistent BlockDisplay entities and does not affect teleportation.
+    enabled: false
+  experimental-water-frame:
+    # DEV EXPERIMENT ONLY. Client sees water where the solid top frame actually is.
+    # This can cause movement rubber-banding and prevent normal mining/interaction.
+    # Do not enable on a production server until the limitations are resolved.
+    enabled: false
+    view-distance: 24.0
+    rendering:
+      # VANILLA uses the client's normal display-entity lighting.
+      # OVERRIDE is a diagnostic mode, not recommended for production.
+      lighting-mode: VANILLA
+      override-block-light: 15
+      override-sky-light: 15
+      # Display-entity visibility multiplier, not a distance in blocks.
+      display-view-range: 8.0
+      # 0 disables periodic water resends; 200 = every 10 seconds.
+      refresh-interval-ticks: 200
 networks:
   default-routing: PAIR
   require-authorization-to-join: true
 teleportation:
   cooldown-seconds: 3
   allow-cross-world: true
+
+# Default resource-pack delivery uses the configured HTTPS public URL.
+# Integrated HTTP hosting may remain enabled for an HTTPS reverse proxy.
+resource-pack:
+  enabled: true
+  hosting:
+    enabled: true
+    bind-address: "0.0.0.0"
+    port: 25778
+    # AUTO: derive the host from the Minecraft connection (HTTP port must be reachable).
+    # MANUAL: use public-url, including HTTPS via Caddy/reverse proxy.
+    url-mode: MANUAL
+    public-url: "https://resources.iruixos.com/Nexora-Resources.zip"
+  delivery:
+    send-on-join: true
+    required: false
+    prompt: "Download Nexora's animated portal textures?"
+
+
+  # Client-only 1.2.3-style water portal for players without the Nexora pack.
+  # No real water blocks are placed on the server.
+  fallback:
+    mode: LEGACY # LEGACY or NONE
+    timeout-seconds: 20
+    view-distance: 48

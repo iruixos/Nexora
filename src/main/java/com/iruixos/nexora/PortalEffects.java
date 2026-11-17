@@ -29,10 +29,21 @@ final class PortalEffects {
         try{return Particle.valueOf(name.toUpperCase(Locale.ROOT));}
         catch(IllegalArgumentException ex){plugin.getLogger().warning("Invalid particle at "+path+": "+name);return fallback;}
     }
-    private Sound sound(String path,Sound fallback){
-        String name=config.getString(path,fallback.name());
-        try{return Sound.valueOf(name.toUpperCase(Locale.ROOT));}
-        catch(IllegalArgumentException ex){plugin.getLogger().warning("Invalid sound at "+path+": "+name);return fallback;}
+    /** Resolve legacy uppercase sound names and namespaced registry keys without OldEnum APIs. */
+    private Sound sound(String path, Sound fallback){
+        String configured=config.getString(path);
+        if(configured==null || configured.isBlank())return fallback;
+        String value=configured.strip().toLowerCase(Locale.ROOT);
+        // Existing effects.yml values use ENTITY_ENDERMAN_TELEPORT; registry keys use
+        // minecraft:entity.enderman.teleport. Already-namespaced keys are accepted too.
+        if(!value.contains(":"))value="minecraft:"+value.replace('_','.');
+        NamespacedKey key=NamespacedKey.fromString(value);
+        Sound result=key==null?null:Registry.SOUNDS.get(key);
+        if(result==null){
+            plugin.getLogger().warning("Invalid sound at "+path+": "+configured);
+            return fallback;
+        }
+        return result;
     }
     private void ambient(){
         Particle type=particle("ambient.particle",Particle.ENCHANT);

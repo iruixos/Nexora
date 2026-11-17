@@ -1,5 +1,5 @@
 name: Nexora
-version: '1.2.3'
+version: '1.3.0'
 main: com.iruixos.nexora.NexoraPlugin
 api-version: '26.3'
 author: iruixos
@@ -22,4 +22,6 @@ permissions:
   nexora.network.info:
     default: true
   nexora.network.manage:
+    default: true
+  nexora.exit.manage:
     default: true
