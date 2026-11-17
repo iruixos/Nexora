@@ -122,7 +122,7 @@ Example:
 ```caddyfile
 resources.example.com {
     @nexora path /Nexora-Resources.zip
-    reverse_proxy @nexora 192.168.50.5:25778
+    reverse_proxy @nexora 192.168.0.1:25778
 }
 ```
 
